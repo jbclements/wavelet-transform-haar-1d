@@ -1,9 +1,7 @@
 #lang racket
 
 (module+ test
-  (require rsound
-           plot
-           math/array
+  (require math/array
            rackunit
            racket/block
            "haar-1d.rkt")

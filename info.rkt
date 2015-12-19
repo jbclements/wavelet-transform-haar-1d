@@ -3,16 +3,12 @@
 (define collection 'multi)
 
 (define deps
-  (list)
-  #;(list "base"
-        "typed-racket-lib"
-        "typed-racket-more"
-        "unstable-contract-lib"))
+  (list
+   "base"
+   "math-lib"
+   #;"plot-gui-lib"
+   "typed-racket-lib"
+   "typed-racket-more"))
 
 (define build-deps
-  (list)
-  #;(list "racket-doc"
-        "rackunit-lib"
-        "scribble-lib"))
-
-
+  (list "rackunit-lib"))
