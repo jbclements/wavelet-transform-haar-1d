@@ -15,6 +15,8 @@
   ;; basic dimension for testing is 2^N
   (define N 5)
   (define POINTS (expt 2 N))
+
+  (check-true (power-of-2? POINTS))
   
   ;; build a list of basis vectors of dimension 2^N
   
@@ -70,31 +72,14 @@
                [x (in-array arr)])
       (array+ arr (array* v (array x)))))
 
-  ;; double the length of an array by duplicating each
-  ;; element
-  (define (expand-array arr)
-    (for/array ([i (in-range (* 2 (array-size arr)))])
-      (array-ref arr (vector (floor (/ i 2))))))
 
-  (check-equal? (expand-array (array #[0.3 -4]))
-                (array #[0.3 0.3 -4 -4]))
+  (test-case
+   "expand-array"
+   (check-equal? (expand-array (array #[0.3 -4]))
+                 (array #[0.3 0.3 -4 -4])))
 
-  ;; use a subset of the elements in a given array of haar coefficients
-  ;; to reconstruct a larger array
-  (define (haar-reconstruct-step accum coefficients offset mult)
-    (define adjustment-array
-      (for/array ([i (in-range (array-size accum))])
-        (define coefficient
-          (* mult
-             (array-ref coefficients
-                        (vector (+ offset
-                                   (floor (/ i 2)))))))
-        (cond [(= 0 (modulo i 2)) coefficient]
-              [else (- coefficient)])))
-    (array+ accum
-            adjustment-array))
-
-
+  ;; check that two arrays of reals have identical shapes
+  ;; and elements that are within epsilon of each other.
   (define ((array-= epsilon) a b)
     (and (equal? (array-shape a) (array-shape b))
          (for/and ([aval (in-array a)]
@@ -107,24 +92,6 @@
                                 2
                                 3.0)
          (array #[1.2 -0.6 -0.8 -3.2]))
-
-  ;; given a 1-d array of reals
-  ;; whose length is a power of 2, perform an inverse
-  ;; wavelet transform.
-  (define (fast-haar-inverse-transform arr)
-    (define init-array (make-array #(1)
-                                   (* (array-ref arr (vector 0))
-                                      (sqrt (/ 1 (array-size arr))))))
-    (let loop ([offset 1]
-               [accum init-array])
-      (cond [(= offset (array-size arr)) accum]
-            [else
-             (define expanded (expand-array accum))
-             (define multiplier (sqrt (/ (array-size accum) (array-size arr))))
-             (loop (+ offset (array-size accum))
-                   (haar-reconstruct-step expanded
-                                          arr offset
-                                          multiplier))])))
   
   (block
    (random-seed 779287)

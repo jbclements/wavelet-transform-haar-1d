@@ -9,13 +9,62 @@
          plot
          racket/block)
 
-(provide fast-haar-transform)
+(provide fast-haar-transform
+
+         fast-haar-inverse-transform
+         expand-array
+         haar-reconstruct-step
+
+         power-of-2?)
 
 ;; the basic idea here is that--for the Haar basis, at least--all you
 ;; care about is the sum of some subset of values. This means that after
 ;; you've extracted all of the high-frequency terms, you can compress
 ;; by a factor of two without affecting your ability to compute
 ;; the lower-frequency terms.
+
+;; given a 1-d array whose length is a power of two, 
+;; use high-freq and squeeze to build a linear-time transform:
+(: fast-haar-transform ((Array Float) -> (Array Float)))
+(define (fast-haar-transform arr)
+  (unless (= 1 (vector-length (array-shape arr)))
+    (raise-argument-error 'fast-haar-transform
+                          "Array with one dimension"
+                          0 arr))
+  (unless (power-of-2? (vector-ref (array-shape arr) 0))
+    (raise-argument-error 'fast-haar-transform
+                          "Array whose length is a power of 2"
+                          0 arr))
+  (: orig-len Positive-Float)
+  (define orig-len
+    (match (exact->inexact (vector-ref (array-shape arr) 0))
+      [(? positive-float? n) n]
+      [else (error "internal error, length of array not positive-Float")]))
+  (define sub-arrays
+    (let loop : (Listof (Array Float)) ([arr arr])
+      (: len Positive-Float)
+      (define len
+        (match (exact->inexact (vector-ref (array-shape arr) 0))
+          [(? positive-float? n) n]
+          [else (error "internal error, length of array not positive-Float")]))
+      (: k Float)
+      (define k (sqrt
+                 (match (/ 1.0 (* orig-len (/ 2.0 len)))
+                   [(? positive-float? n) n]
+                   [else (error "internal error, expected positive-Float")])))
+      (define hf (high-freq arr k))
+      (cons hf
+            (cond [(= len 2.0)
+                   ;; must special-case vector zero
+                   (list
+                    (list->array
+                     (list
+                      (* k
+                         (+ (array-ref arr (vector 0))
+                            (array-ref arr (vector 1)))))))]
+                  [else
+                   (loop (squeeze arr))]))))
+  (arrays-join (reverse sub-arrays)))
 
 ;; given a one-dimensional array of even length l and a multiplier k,
 ;; construct a new one-dimensional array of length l/2 where each term
@@ -62,37 +111,80 @@
 (define-predicate nonnegative-Float? Nonnegative-Float)
 (define-predicate positive-float? Positive-Float)
 
-;; given a 1-d array whose length is a power of two, 
-;; use high-freq and squeeze to build a linear-time transform:
-(: fast-haar-transform ((Array Float) -> (Array Float)))
-(define (fast-haar-transform arr)
-  (: orig-len Positive-Float)
-  (define orig-len
-    (match (exact->inexact (vector-ref (array-shape arr) 0))
-      [(? positive-float? n) n]
-      [else (error "internal error, length of array not positive-Float")]))
-  (define sub-arrays
-    (let loop : (Listof (Array Float)) ([arr arr])
-      (: len Positive-Float)
-      (define len
-        (match (exact->inexact (vector-ref (array-shape arr) 0))
-          [(? positive-float? n) n]
-          [else (error "internal error, length of array not positive-Float")]))
-      (: k Float)
-      (define k (sqrt
-                 (match (/ 1.0 (* orig-len (/ 2.0 len)))
-                   [(? positive-float? n) n]
-                   [else (error "internal error, expected positive-Float")])))
-      (define hf (high-freq arr k))
-      (cons hf
-            (cond [(= len 2.0)
-                   ;; must special-case vector zero
-                   (list
-                    (list->array
-                     (list
-                      (* k
-                         (+ (array-ref arr (vector 0))
-                            (array-ref arr (vector 1)))))))]
-                  [else
-                   (loop (squeeze arr))]))))
-  (arrays-join (reverse sub-arrays)))
+
+
+;;;;;;;
+;;
+;;  INVERSE TRANSFORM
+;;
+;;;;;;;
+
+;; double the length of an array by duplicating each
+;; element
+(: expand-array (All (T) ((Array T) -> (Array T))))
+(define (expand-array arr)
+  (for/array: #:shape (vector (* 2 (array-size arr)))
+    ([i (in-range (* 2 (array-size arr)))]) : T
+    (array-ref arr (vector (floor (/ i 2))))))
+
+
+
+;; use a subset of the elements in a given array of haar coefficients
+;; to reconstruct a larger array
+(: haar-reconstruct-step ((Array Real) (Array Real) Index Real ->
+                                       (Array Real)))
+(define (haar-reconstruct-step accum coefficients offset mult)
+  (define adjustment-array
+    (for/array ([i (in-range (array-size accum))]) : Real
+      (define coefficient
+        (* mult
+           (array-ref coefficients
+                      (vector (+ offset
+                                 (floor (/ i 2)))))))
+      (cond [(= 0 (modulo i 2)) coefficient]
+            [else (- coefficient)])))
+  (array+ accum
+          adjustment-array))
+
+
+
+;; given a 1-d array of reals
+;; whose length is a power of 2, perform an inverse
+;; wavelet transform.
+(: fast-haar-inverse-transform ((Array Real) -> (Array Real)))
+(define (fast-haar-inverse-transform arr)
+  (unless (= 1 (vector-length (array-shape arr)))
+    (raise-argument-error 'fast-haar-transform
+                          "Array with one dimension"
+                          0 arr))
+  (unless (power-of-2? (vector-ref (array-shape arr) 0))
+    (raise-argument-error 'fast-haar-transform
+                          "Array whose length is a power of 2"
+                          0 arr))
+  (define init-array (make-array #(1)
+                                 (* (array-ref arr (vector 0))
+                                    (sqrt (/ 1 (array-size arr))))))
+  (let loop ([offset : Index 1]
+             [accum init-array])
+    (cond [(= offset (array-size arr)) accum]
+          [else
+           (define expanded (expand-array accum))
+           (define multiplier (sqrt (/ (array-size accum) (array-size arr))))
+           (loop (ensure-index (+ offset (array-size accum)))
+                 (haar-reconstruct-step expanded
+                                        arr offset
+                                        multiplier))])))
+
+(: ensure-index (Nonnegative-Fixnum -> Index))
+(define (ensure-index i)
+  (cond [(index? i) i]
+        [else (raise-argument-error 'ensure-index
+                                    "Index"
+                                    0 i)]))
+
+(: power-of-2? (Nonnegative-Integer -> Boolean))
+(define (power-of-2? p)
+  (cond [(= p 1) true]
+        [(= (modulo p 2) 0)
+         (power-of-2? (floor (/ p 2)))]
+        [else false]))
